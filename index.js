@@ -139,15 +139,7 @@ app.post('/generate-from-image', upload.single('image'), async (req, res) => {
       details: error.message,
       tip: 'Pastikan file yang diunggah adalah gambar yang valid dan API Key Gemini Anda berfungsi. Periksa juga log server.'
     });
-  } finally {
-    // Pastikan file dihapus dari folder uploads, baik sukses atau gagal
-    if (req.file && fs.existsSync(req.file.path)) { // Cek apakah file ada sebelum mencoba menghapus
-        fs.unlink(req.file.path, (err) => { // Gunakan fs.unlink (asinkron) untuk performa lebih baik
-            if (err) console.error(`[${new Date().toISOString()}] Gagal menghapus file ${req.file.path}:`, err);
-            else console.log(`[${new Date().toISOString()}] File dihapus: ${req.file.path}`);
-        });
-    }
-  }
+  } 
 });
 
 /**
@@ -214,15 +206,7 @@ app.post('/generate-from-document', upload.single('document'), async (req, res) 
       details: error.message,
       tip: 'Pastikan file yang diunggah adalah dokumen yang valid dan API Key Gemini Anda berfungsi. Periksa juga log server.'
     });
-  } finally {
-    // Pastikan file dihapus dari folder uploads, baik sukses atau gagal
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error(`[${new Date().toISOString()}] Gagal menghapus file ${req.file.path}:`, err);
-        else console.log(`[${new Date().toISOString()}] File dihapus: ${req.file.path}`);
-      });
-    }
-  }
+  } 
 });
 
 // --- 8. Menjalankan Server ---
