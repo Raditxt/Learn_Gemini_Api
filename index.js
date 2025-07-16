@@ -21,14 +21,14 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // 5. Konfigurasi Multer untuk penanganan file upload
-// Menentukan tempat penyimpanan file: 'uploads/'
+// Menentukan tempat penyimpanan file: 'uploads/'. Multer akan membuat folder ini jika belum ada.
 const upload = multer({ dest: 'uploads/' });
 
 // --- Helper Function untuk Konversi File ke Format Gemini ---
 // Fungsi ini mengonversi jalur file lokal menjadi InlineDataPart yang bisa dikirim ke Gemini.
+// Penting: Hanya membaca file yang secara aman diasumsikan ada dan valid.
 function fileToGenerativePart(filePath, mimeType) {
-  // Membaca file secara sinkron dan mengonversinya ke Base64
-  const fileData = fs.readFileSync(filePath);
+  const fileData = fs.readFileSync(filePath); // Membaca file secara sinkron
   return {
     inlineData: {
       data: Buffer.from(fileData).toString('base64'),
@@ -37,8 +37,8 @@ function fileToGenerativePart(filePath, mimeType) {
   };
 }
 
-// 6. Middleware
-app.use(cors()); // Mengizinkan semua origin. Sesuaikan jika Anda membutuhkan konfigurasi CORS yang lebih ketat.
+// 6. Middleware Global
+app.use(cors()); // Mengizinkan semua origin. Untuk produksi, pertimbangkan untuk membatasi origin tertentu.
 app.use(express.json()); // Middleware untuk parsing JSON request body
 
 // Middleware untuk melayani file statis dari folder uploads (opsional, untuk debugging)
@@ -68,17 +68,19 @@ app.post('/generate-text', async (req, res) => {
 
     console.log(`[${new Date().toISOString()}] Menerima prompt teks: "${prompt}"`);
 
+    // Kirim prompt ke Gemini dan tunggu respons
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    const response = await result.response; // Ambil objek respons dari hasil
+    const text = response.text(); // Ekstrak teks dari objek respons
 
+    // Kirim respons JSON ke klien
     res.json({ output: text });
 
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error saat menghasilkan teks:`, error);
     res.status(500).json({
       error: 'Gagal menghasilkan teks dari Gemini.',
-      details: error.message,
+      details: error.message, // Detail error untuk debugging
       tip: 'Pastikan API Key Gemini Anda valid dan service Gemini sedang tidak mengalami gangguan. Periksa juga log server untuk detail lebih lanjut.'
     });
   }
@@ -101,13 +103,13 @@ app.post('/generate-from-image', upload.single('image'), async (req, res) => {
     const mimeType = req.file.mimetype; // MIME type dari gambar
 
     // Opsional: Validasi MIME type jika Anda hanya ingin menerima jenis gambar tertentu
-    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!allowedMimeTypes.includes(mimeType)) {
+    const allowedImageMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedImageMimeTypes.includes(mimeType)) {
       // Hapus file yang tidak valid dan kirim error
       fs.unlink(imagePath, (err) => { // Menggunakan fs.unlink asinkron
         if (err) console.error(`[${new Date().toISOString()}] Gagal menghapus file tidak valid:`, err);
       });
-      return res.status(400).json({ error: `Tipe file ${mimeType} tidak didukung. Hanya JPEG, PNG, GIF, WebP yang diizinkan.` });
+      return res.status(400).json({ error: `Tipe file ${mimeType} tidak didukung. Hanya JPEG, PNG, GIF, WebP yang diizinkan untuk gambar.` });
     }
 
     // Mengambil prompt dari body atau menggunakan default jika tidak ada
@@ -119,7 +121,6 @@ app.post('/generate-from-image', upload.single('image'), async (req, res) => {
     const imagePart = fileToGenerativePart(imagePath, mimeType);
 
     // Buat array konten untuk dikirim ke Gemini (prompt teks dan gambar)
-    // Urutan elemen dalam array penting, pastikan teks dan gambar ada di sini
     const parts = [
       { text: prompt }, // Prompt teks sebagai bagian terpisah
       imagePart
@@ -145,6 +146,81 @@ app.post('/generate-from-image', upload.single('image'), async (req, res) => {
             if (err) console.error(`[${new Date().toISOString()}] Gagal menghapus file ${req.file.path}:`, err);
             else console.log(`[${new Date().toISOString()}] File dihapus: ${req.file.path}`);
         });
+    }
+  }
+});
+
+/**
+ * @route POST /generate-from-document
+ * @description Menghasilkan analisis/ringkasan teks dari Gemini berdasarkan dokumen yang diunggah.
+ * @body {file} document - File dokumen (PDF, TXT, DOCX, XLSX, PPTX) dengan nama field 'document'.
+ * @body {string} [prompt] - Opsional: Prompt teks kustom.
+ */
+app.post('/generate-from-document', upload.single('document'), async (req, res) => {
+  try {
+    // --- Validasi file upload ---
+    if (!req.file) {
+      return res.status(400).json({ error: 'File dokumen diperlukan.' });
+    }
+
+    const filePath = req.file.path;
+    const mimeType = req.file.mimetype;
+
+    // --- Validasi MIME type dokumen ---
+    const allowedDocMimeTypes = [
+      'application/pdf',
+      'text/plain',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',     // .xlsx
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation' // .pptx
+    ];
+    if (!allowedDocMimeTypes.includes(mimeType)) {
+      // Hapus file yang tidak valid dan kirim error
+      fs.unlink(filePath, (err) => {
+        if (err) console.error(`[${new Date().toISOString()}] Gagal menghapus file tidak valid:`, err);
+      });
+      return res.status(400).json({ error: `Tipe file ${mimeType} tidak didukung. Dokumen yang diizinkan: PDF, TXT, DOCX, XLSX, PPTX.` });
+    }
+
+    // Mengambil prompt dari body atau menggunakan default
+    const prompt = req.body.prompt || 'Analyze this document and summarize its key points:';
+
+    console.log(`[${new Date().toISOString()}] Menerima file dokumen: ${req.file.originalname} (${mimeType}) dengan prompt: "${prompt}"`);
+
+    // Baca file secara asinkron dan konversi ke Base64
+    const fileBuffer = await fs.promises.readFile(filePath); // Menggunakan Promise-based fs.readFile
+    const base64Data = fileBuffer.toString('base64');
+
+    const documentPart = {
+      inlineData: { data: base64Data, mimeType }
+    };
+
+    // Buat array konten untuk Gemini
+    const parts = [
+        { text: prompt },
+        documentPart
+    ];
+
+    const result = await model.generateContent({ contents: [{ parts }] });
+    const response = await result.response;
+    const text = response.text();
+
+    res.json({ output: text });
+
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error saat memproses dokumen:`, error);
+    res.status(500).json({
+      error: 'Gagal memproses dokumen dengan Gemini.',
+      details: error.message,
+      tip: 'Pastikan file yang diunggah adalah dokumen yang valid dan API Key Gemini Anda berfungsi. Periksa juga log server.'
+    });
+  } finally {
+    // Pastikan file dihapus dari folder uploads, baik sukses atau gagal
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlink(req.file.path, (err) => {
+        if (err) console.error(`[${new Date().toISOString()}] Gagal menghapus file ${req.file.path}:`, err);
+        else console.log(`[${new Date().toISOString()}] File dihapus: ${req.file.path}`);
+      });
     }
   }
 });
