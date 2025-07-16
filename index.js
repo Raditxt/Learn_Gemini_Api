@@ -139,7 +139,7 @@ app.post('/generate-from-image', upload.single('image'), async (req, res) => {
       details: error.message,
       tip: 'Pastikan file yang diunggah adalah gambar yang valid dan API Key Gemini Anda berfungsi. Periksa juga log server.'
     });
-  } 
+  }
 });
 
 /**
@@ -205,6 +205,70 @@ app.post('/generate-from-document', upload.single('document'), async (req, res) 
       error: 'Gagal memproses dokumen dengan Gemini.',
       details: error.message,
       tip: 'Pastikan file yang diunggah adalah dokumen yang valid dan API Key Gemini Anda berfungsi. Periksa juga log server.'
+    });
+  }
+});
+
+/**
+ * @route POST /generate-from-audio
+ * @description Menerima file audio dan mengembalikan transkripsi atau analisis dari Gemini 1.5 Flash.
+ * @body {file} audio - File audio (MP3, WAV, dll.) dengan nama field 'audio'.
+ * @body {string} [prompt] - Opsional: Prompt teks kustom.
+ */
+app.post('/generate-from-audio', upload.single('audio'), async (req, res) => {
+  try {
+    // --- Validasi file upload ---
+    if (!req.file) {
+      return res.status(400).json({ error: 'File audio diperlukan.' });
+    }
+
+    const audioPath = req.file.path;
+    const mimeType = req.file.mimetype;
+
+    // --- Validasi MIME type audio ---
+    // Pastikan ini sesuai dengan format yang didukung Gemini dan kebutuhan Anda.
+    // Gemini 1.5 Flash mendukung MP3 dan WAV untuk inline data.
+    const allowedAudioMimeTypes = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/x-m4a'];
+    if (!allowedAudioMimeTypes.includes(mimeType)) {
+      fs.unlink(audioPath, (err) => { // Hapus file yang tidak valid
+        if (err) console.error(`[${new Date().toISOString()}] Gagal menghapus file tidak valid:`, err);
+      });
+      return res.status(400).json({ error: `Tipe file ${mimeType} tidak didukung. Hanya MP3, WAV, M4A yang diizinkan untuk audio.` });
+    }
+
+    // Mengambil prompt dari body atau menggunakan default
+    const prompt = req.body.prompt || 'Transcribe the following audio:';
+
+    console.log(`[${new Date().toISOString()}] Menerima file audio: ${req.file.originalname} (${mimeType}) dengan prompt: "${prompt}"`);
+
+    // Baca file secara asinkron dan konversi ke Base64
+    const audioBuffer = await fs.promises.readFile(audioPath);
+    const base64Audio = audioBuffer.toString('base64');
+
+    const audioPart = {
+      inlineData: {
+        data: base64Audio,
+        mimeType: mimeType
+      }
+    };
+
+    const parts = [
+      { text: prompt },
+      audioPart
+    ];
+
+    const result = await model.generateContent({ contents: [{ parts }] });
+    const response = await result.response;
+    const text = response.text();
+
+    res.json({ output: text });
+
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error saat memproses audio:`, error);
+    res.status(500).json({
+      error: 'Gagal memproses audio dengan Gemini.',
+      details: error.message,
+      tip: 'Pastikan file audio berukuran/durasi sesuai batasan Gemini (maks 2 menit untuk Flash) dan API Key Anda valid. Periksa juga log server.'
     });
   } 
 });
